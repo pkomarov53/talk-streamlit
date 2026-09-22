@@ -183,3 +183,4 @@ cython_debug/
 # Streamlit
 .streamlit
 /.streamlit
+.streamlit/secrets.toml

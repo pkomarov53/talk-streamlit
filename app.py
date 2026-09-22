@@ -2,7 +2,7 @@ import uuid
 import calendar
 import streamlit as st
 from datetime import date, time, datetime, timedelta, timezone
-from talk_api import TalkAPI, TalkAPIError
+from config.talk_api import TalkAPI, TalkAPIError
 
 # Конфигурация страницы
 st.set_page_config(
@@ -326,12 +326,8 @@ if not space or not api_key or not organizer_email:
 
 api = TalkAPI(space=space, api_key=api_key)
 
-# Header приложения
-st.markdown("## 🎥 Сервис планирования Контур.Толк")
-st.caption("Единая панель управления онлайн-занятиями, вебинарами и расписанием")
-
 # Основные вкладки
-tab_plan, tab_calendar = st.tabs(["🗓 Планирование встреч", "📆 Календарь и Мониторинг"])
+tab_plan, tab_calendar = st.tabs(["Планирование", "Календарь"])
 
 # ==============================================================================
 # ВКЛАДКА 1: ЗАПЛАНИРОВАТЬ ВСТРЕЧИ
@@ -720,7 +716,7 @@ with tab_calendar:
                         if simultaneous_count > 1:
                             bg_col = "#FEF2F2"
                             border_col = "#FCA5A5"
-                            text_badge = f"<span style='color: #DC2626; font-size: 0.75rem; font-weight: 600;'>🔴 Конфликт: {simultaneous_count}</span>"
+                            text_badge = f"<span style='color: #DC2626; font-size: 0.75rem; font-weight: 600;'>🔴 Пересечений: {simultaneous_count}</span>"
                         else:
                             bg_col = "#F0FDF4"
                             border_col = "#86EFAC"
