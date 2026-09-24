@@ -2,7 +2,7 @@ import uuid
 import calendar
 import streamlit as st
 from datetime import date, time, datetime, timedelta, timezone
-from config.talk_api import TalkAPI, TalkAPIError
+from talk_api import TalkAPI, TalkAPIError
 
 # Конфигурация страницы
 st.set_page_config(
@@ -326,8 +326,12 @@ if not space or not api_key or not organizer_email:
 
 api = TalkAPI(space=space, api_key=api_key)
 
+# Header приложения
+st.markdown("## 🎥 Сервис планирования Контур.Толк")
+st.caption("Единая панель управления онлайн-занятиями, вебинарами и расписанием")
+
 # Основные вкладки
-tab_plan, tab_calendar = st.tabs(["Планирование", "Календарь"])
+tab_plan, tab_calendar = st.tabs(["🗓 Планирование встреч", "📆 Календарь и Мониторинг"])
 
 # ==============================================================================
 # ВКЛАДКА 1: ЗАПЛАНИРОВАТЬ ВСТРЕЧИ
@@ -372,19 +376,64 @@ with tab_plan:
 
     sorted_dates = sorted(list(st.session_state["selected_dates"]))
 
-    if sorted_dates:
-        st.markdown(f"**Выбранные даты ({len(sorted_dates)}):**")
-        cols = st.columns(min(len(sorted_dates), 5))
-        for idx, d in enumerate(sorted_dates):
-            col_idx = idx % 5
-            with cols[col_idx]:
-                if st.button(f"✕ {d.strftime('%d.%m.%Y')}", key=f"del_{d}", use_container_width=True):
-                    st.session_state["selected_dates"].remove(d)
-                    st.rerun()
+    # Значения времени и длительности по умолчанию из session_state
+    default_start_time = st.session_state.get("global_start_time", time(18, 0))
+    default_duration = st.session_state.get("global_duration", 60)
 
-        if st.button("🗑 Очистить все даты", type="secondary"):
-            st.session_state["selected_dates"].clear()
-            st.rerun()
+    if sorted_dates:
+        col_d_title, col_d_clear = st.columns([3, 1])
+        with col_d_title:
+            st.markdown(f"**Выбранные даты ({len(sorted_dates)}):**")
+        with col_d_clear:
+            if st.button("🗑 Очистить все даты", type="secondary", use_container_width=True):
+                st.session_state["selected_dates"].clear()
+                st.rerun()
+
+        weekdays_ru = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+
+        for d in sorted_dates:
+            d_str = d.strftime("%d.%m.%Y")
+            is_custom = st.session_state.get(f"use_custom_{d}", False)
+
+            if is_custom:
+                c_time = st.session_state.get(f"time_{d}", default_start_time)
+                c_dur = st.session_state.get(f"dur_{d}", default_duration)
+                header_text = f"📅 {d_str} ({weekdays_ru[d.weekday()]}) — ⏰ {c_time.strftime('%H:%M')}, {c_dur} мин (индивидуально)"
+            else:
+                header_text = f"📅 {d_str} ({weekdays_ru[d.weekday()]}) — ⏰ {default_start_time.strftime('%H:%M')}, {default_duration} мин (по умолчанию)"
+
+            with st.expander(header_text, expanded=is_custom):
+                col_chk, col_del = st.columns([3, 1])
+                with col_chk:
+                    use_custom = st.checkbox(
+                        "Задать индивидуальное время и длительность для этой даты",
+                        value=is_custom,
+                        key=f"use_custom_{d}"
+                    )
+                with col_del:
+                    if st.button("🗑 Удалить дату", key=f"del_{d}", use_container_width=True):
+                        st.session_state["selected_dates"].remove(d)
+                        st.rerun()
+
+                if use_custom:
+                    col_t, col_dur_item = st.columns(2)
+                    with col_t:
+                        st.time_input(
+                            "Время начала (по МСК)",
+                            value=st.session_state.get(f"time_{d}", default_start_time),
+                            key=f"time_{d}"
+                        )
+                    with col_dur_item:
+                        st.number_input(
+                            "Длительность (минут)",
+                            min_value=15,
+                            max_value=480,
+                            value=st.session_state.get(f"dur_{d}", default_duration),
+                            step=15,
+                            key=f"dur_{d}"
+                        )
+                else:
+                    st.caption(f"Используются общие параметры из разд. 3: начало в **{default_start_time.strftime('%H:%M')}**, длительность **{default_duration} мин.**")
     else:
         st.caption("Список выбранных дат пока пуст.")
 
@@ -393,9 +442,20 @@ with tab_plan:
     st.markdown("#### 3. Параметры и списки")
     col_t1, col_dur = st.columns(2)
     with col_t1:
-        start_time = st.time_input("Время начала (по МСК / GMT+3)", value=time(18, 0))
+        start_time = st.time_input(
+            "Время начала по умолчанию (по МСК / GMT+3)",
+            value=st.session_state.get("global_start_time", time(18, 0)),
+            key="global_start_time"
+        )
     with col_dur:
-        duration = st.number_input("Длительность (минут)", min_value=15, max_value=480, value=60, step=15)
+        duration = st.number_input(
+            "Длительность по умолчанию (минут)",
+            min_value=15,
+            max_value=480,
+            value=st.session_state.get("global_duration", 60),
+            step=15,
+            key="global_duration"
+        )
 
     subject = st.text_input("Название мероприятия", value="Онлайн-занятие")
     description = st.text_area("Описание / ДЗ для участников", value="")
@@ -440,8 +500,17 @@ with tab_plan:
 
         with st.spinner("Создание событий в календаре..."):
             for d in sorted_dates:
-                start_dt = datetime.combine(d, start_time)
-                end_dt = start_dt + timedelta(minutes=int(duration))
+                # Определение индивидуального или дефолтного времени/длительности
+                use_custom = st.session_state.get(f"use_custom_{d}", False)
+                if use_custom:
+                    cur_start_time = st.session_state.get(f"time_{d}", start_time)
+                    cur_duration = st.session_state.get(f"dur_{d}", duration)
+                else:
+                    cur_start_time = start_time
+                    cur_duration = duration
+
+                start_dt = datetime.combine(d, cur_start_time)
+                end_dt = start_dt + timedelta(minutes=int(cur_duration))
 
                 payload = {
                     "start": start_dt.strftime("%Y-%m-%dT%H:%M:%S+03:00"),
@@ -716,7 +785,7 @@ with tab_calendar:
                         if simultaneous_count > 1:
                             bg_col = "#FEF2F2"
                             border_col = "#FCA5A5"
-                            text_badge = f"<span style='color: #DC2626; font-size: 0.75rem; font-weight: 600;'>🔴 Пересечений: {simultaneous_count}</span>"
+                            text_badge = f"<span style='color: #DC2626; font-size: 0.75rem; font-weight: 600;'>🔴 Конфликт: {simultaneous_count}</span>"
                         else:
                             bg_col = "#F0FDF4"
                             border_col = "#86EFAC"
@@ -733,7 +802,7 @@ with tab_calendar:
 
     st.markdown("---")
 
-    # Список встреч по дням
+# Список встреч с фильтрацией по датам и группам
     st.markdown("#### 📋 Детализация встреч")
 
     if not month_meetings:
@@ -742,139 +811,173 @@ with tab_calendar:
         available_days = sorted(list(meetings_by_date_map.keys()))
         day_options = ["Все дни месяца"] + [d.strftime("%d.%m.%Y") for d in available_days]
         
-        selected_day_filter = st.selectbox(
-            "Фильтр по дате:", 
-            options=day_options,
-            index=0
-        )
+        col_f1, col_f2 = st.columns(2)
 
-        filtered_dates = available_days
+        with col_f1:
+            selected_day_filter = st.selectbox(
+                "Фильтр по дате:", 
+                options=day_options,
+                index=0
+            )
+
+        # Применяем фильтр по дате
+        filtered_meetings = []
         if selected_day_filter != "Все дни месяца":
             target_d = datetime.strptime(selected_day_filter, "%d.%m.%Y").date()
-            filtered_dates = [target_d]
+            filtered_meetings = meetings_by_date_map.get(target_d, [])
+        else:
+            filtered_meetings = month_meetings
 
-        for d_val in filtered_dates:
-            day_m_list = meetings_by_date_map[d_val]
-            
-            def get_start_time(m_item):
-                st_val = m_item["start"]
-                return parse_datetime_to_msk(st_val)
+        if not filtered_meetings:
+            st.info("На выбранную дату нет встреч.")
+        else:
+            # Группируем отфильтрованные встречи по названию (subject)
+            meetings_by_subject = {}
+            for m in filtered_meetings:
+                subj = m.get("subject", "Без названия")
+                meetings_by_subject.setdefault(subj, []).append(m)
 
-            day_m_list.sort(key=get_start_time)
-            weekday_name = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"][d_val.weekday()]
-            
-            st.markdown(f"##### 📅 {d_val.strftime('%d.%m.%Y')} ({weekday_name})")
+            subject_names = sorted(list(meetings_by_subject.keys()))
+            subject_options = ["Все мероприятия"] + [f"{subj} ({len(meetings_by_subject[subj])})" for subj in subject_names]
 
-            for idx, m in enumerate(day_m_list):
-                s_dt = parse_datetime_to_msk(m["start"])
-                e_dt = parse_datetime_to_msk(m["end"])
+            with col_f2:
+                selected_subj_filter = st.selectbox(
+                    "Фильтр по мероприятию / группе:",
+                    options=subject_options,
+                    index=0
+                )
+
+            # Определяем, какие группы показывать
+            if selected_subj_filter == "Все мероприятия":
+                display_subjects = subject_names
+            else:
+                idx_selected = subject_options.index(selected_subj_filter) - 1
+                display_subjects = [subject_names[idx_selected]]
+
+            for subj in display_subjects:
+                m_list = meetings_by_subject[subj]
                 
-                s_time = s_dt.strftime("%H:%M")
-                e_time = e_dt.strftime("%H:%M")
-                dur_minutes = int((e_dt - s_dt).total_seconds() // 60)
+                st.markdown(f"##### 📌 {subj} ({len(m_list)})")
+                
+                # Сортируем встречи внутри группы по дате и времени
+                def get_start_dt(m_item):
+                    return parse_datetime_to_msk(m_item["start"])
+                
+                m_list.sort(key=get_start_dt)
 
-                rec_status = "🔴 Автозапись ВКЛ" if m.get("auto_recording") else "⚪ Запись ВЫКЛ"
-
-                with st.expander(f"⏰ {s_time} – {e_time} МСК | {m['subject']}", expanded=True):
-                    col_info, col_link = st.columns([3, 1])
+                for m_idx, m in enumerate(m_list):
+                    s_dt = parse_datetime_to_msk(m["start"])
+                    e_dt = parse_datetime_to_msk(m["end"])
+                    d_val = s_dt.date()
                     
-                    with col_info:
-                        if m.get("description"):
-                            st.markdown(f"**Описание:** {m['description']}")
-                        st.markdown(f"**Комната:** `{m.get('room_name', '—')}` | **Запись:** `{rec_status}`")
+                    m_date_str = s_dt.strftime("%d.%m.%Y")
+                    s_time = s_dt.strftime("%H:%M")
+                    e_time = e_dt.strftime("%H:%M")
+                    dur_minutes = int((e_dt - s_dt).total_seconds() // 60)
 
-                    with col_link:
-                        st.markdown(f"[👉 **Открыть Толк**]({m['room_url']})")
+                    rec_status = "🔴 Автозапись ВКЛ" if m.get("auto_recording") else "⚪ Запись ВЫКЛ"
 
-                    st.markdown("---")
+                    # Раскрывающийся список с датой, временем и продолжительностью
+                    with st.expander(f"📅 {m_date_str} | ⏰ {s_time} – {e_time} МСК ({dur_minutes} мин)", expanded=False):
+                        col_info, col_link = st.columns([3, 1])
+                        
+                        with col_info:
+                            if m.get("description"):
+                                st.markdown(f"**Описание:** {m['description']}")
+                            st.markdown(f"**Комната:** `{m.get('room_name', '—')}` | **Запись:** `{rec_status}`")
 
-                    # Участники
-                    st.markdown("**Состав участников:**")
-                    org_mail = m.get("organizer") or organizer_email
-                    st.markdown(f"<span class='badge-org'>👑 {org_mail}</span>", unsafe_allow_html=True)
+                        with col_link:
+                            st.markdown(f"[👉 **Открыть Толк**]({m['room_url']})")
 
-                    attendees_list = m.get("attendees") or []
-                    if attendees_list:
-                        badges_html = " ".join([
-                            f"<span class='badge-chip'>👤 {att}</span>"
-                            for att in attendees_list
-                        ])
-                        st.markdown(f"<div style='margin-top: 6px;'>{badges_html}</div>", unsafe_allow_html=True)
-                    else:
-                        st.caption("Дополнительные участники не добавлены.")
+                        st.markdown("---")
 
-                    # Форма добавления участника
-                    st.write("")
-                    form_key = f"add_att_{m['id']}_{d_val.isoformat()}_{idx}"
-                    
-                    with st.form(key=form_key, clear_on_submit=True):
-                        c_in, c_btn = st.columns([3, 1])
-                        with c_in:
-                            new_email_input = st.text_input(
-                                "Email нового участника",
-                                placeholder="user@example.com",
-                                key=f"inp_{form_key}",
-                                label_visibility="collapsed"
-                            )
-                        with c_btn:
-                            submit_btn = st.form_submit_button("Добавить", use_container_width=True)
+                        # Участники
+                        st.markdown("**Состав участников:**")
+                        org_mail = m.get("organizer") or organizer_email
+                        st.markdown(f"<span class='badge-org'>👑 {org_mail}</span>", unsafe_allow_html=True)
 
-                        if submit_btn:
-                            email_clean = new_email_input.strip().lower()
-                            if email_clean and "@" in email_clean and "." in email_clean:
-                                start_iso = s_dt.strftime("%Y-%m-%dT%H:%M:%S+03:00")
-                                end_iso = e_dt.strftime("%Y-%m-%dT%H:%M:%S+03:00")
+                        attendees_list = m.get("attendees") or []
+                        if attendees_list:
+                            badges_html = " ".join([
+                                f"<span class='badge-chip'>👤 {att}</span>"
+                                for att in attendees_list
+                            ])
+                            st.markdown(f"<div style='margin-top: 6px;'>{badges_html}</div>", unsafe_allow_html=True)
+                        else:
+                            st.caption("Дополнительные участники не добавлены.")
 
-                                current_emails = []
-                                for att in m.get("attendees", []):
-                                    if "(" in att and ")" in att:
-                                        mail_extracted = att.split("(")[-1].replace(")", "").strip()
-                                        if "@" in mail_extracted:
-                                            current_emails.append(mail_extracted)
-                                    elif "@" in att:
-                                        current_emails.append(att)
+                        # Форма добавления участника
+                        st.write("")
+                        form_key = f"add_att_{m['id']}_{d_val.isoformat()}_{m_idx}"
+                        
+                        with st.form(key=form_key, clear_on_submit=True):
+                            c_in, c_btn = st.columns([3, 1])
+                            with c_in:
+                                new_email_input = st.text_input(
+                                    "Email нового участника",
+                                    placeholder="user@example.com",
+                                    key=f"inp_{form_key}",
+                                    label_visibility="collapsed"
+                                )
+                            with c_btn:
+                                submit_btn = st.form_submit_button("Добавить", use_container_width=True)
 
-                                if email_clean not in current_emails:
-                                    current_emails.append(email_clean)
+                            if submit_btn:
+                                email_clean = new_email_input.strip().lower()
+                                if email_clean and "@" in email_clean and "." in email_clean:
+                                    start_iso = s_dt.strftime("%Y-%m-%dT%H:%M:%S+03:00")
+                                    end_iso = e_dt.strftime("%Y-%m-%dT%H:%M:%S+03:00")
 
-                                raw = m.get("raw_json", {})
-                                is_recurring = raw.get("isRecurring", False)
+                                    current_emails = []
+                                    for att in m.get("attendees", []):
+                                        if "(" in att and ")" in att:
+                                            mail_extracted = att.split("(")[-1].replace(")", "").strip()
+                                            if "@" in mail_extracted:
+                                                current_emails.append(mail_extracted)
+                                        elif "@" in att:
+                                            current_emails.append(att)
 
-                                update_payload = {
-                                    "start": start_iso,
-                                    "end": end_iso,
-                                    "timezone": "GMT+3",
-                                    "subject": m.get("subject", "Встреча"),
-                                    "description": m.get("description", ""),
-                                    "roomName": m.get("room_name", ""),
-                                    "enableAutoRecording": m.get("auto_recording", True),
-                                    "isRecurring": is_recurring,
-                                    "requiredExternalAttendeesEmails": current_emails,
-                                    "requiredInternalAttendeesEmails": current_emails,
-                                    "requiredAttendees": [{"mailbox": e} for e in current_emails],
-                                }
+                                    if email_clean not in current_emails:
+                                        current_emails.append(email_clean)
 
-                                if is_recurring and raw.get("recurrence"):
-                                    update_payload["recurrence"] = raw["recurrence"]
+                                    raw = m.get("raw_json", {})
+                                    is_recurring = raw.get("isRecurring", False)
 
-                                try:
-                                    api.add_attendee(
-                                        organizer_email,
-                                        m["id"],
-                                        email_clean,
-                                        meeting_payload=update_payload
-                                    )
-                                    st.toast(f"Участник {email_clean} добавлен!", icon="✅")
-                                except Exception as err:
-                                    st.toast(f"Ошибка API при добавлении: {err}", icon="⚠️")
+                                    update_payload = {
+                                        "start": start_iso,
+                                        "end": end_iso,
+                                        "timezone": "GMT+3",
+                                        "subject": m.get("subject", "Встреча"),
+                                        "description": m.get("description", ""),
+                                        "roomName": m.get("room_name", ""),
+                                        "enableAutoRecording": m.get("auto_recording", True),
+                                        "isRecurring": is_recurring,
+                                        "requiredExternalAttendeesEmails": current_emails,
+                                        "requiredInternalAttendeesEmails": current_emails,
+                                        "requiredAttendees": [{"mailbox": e} for e in current_emails],
+                                    }
 
-                                if "attendees" not in m or m["attendees"] is None:
-                                    m["attendees"] = []
+                                    if is_recurring and raw.get("recurrence"):
+                                        update_payload["recurrence"] = raw["recurrence"]
 
-                                if email_clean not in m["attendees"]:
-                                    m["attendees"].append(email_clean)
+                                    try:
+                                        api.add_attendee(
+                                            organizer_email,
+                                            m["id"],
+                                            email_clean,
+                                            meeting_payload=update_payload
+                                        )
+                                        st.toast(f"Участник {email_clean} добавлен!", icon="✅")
+                                    except Exception as err:
+                                        st.toast(f"Ошибка API при добавлении: {err}", icon="⚠️")
 
-                                st.rerun()
-                            else:
-                                st.error("Введите корректный Email адрес.")
+                                    if "attendees" not in m or m["attendees"] is None:
+                                        m["attendees"] = []
+
+                                    if email_clean not in m["attendees"]:
+                                        m["attendees"].append(email_clean)
+
+                                    st.rerun()
+                                else:
+                                    st.error("Введите корректный Email адрес.")
             st.write("")
