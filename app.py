@@ -2,7 +2,7 @@ import uuid
 import calendar
 import streamlit as st
 from datetime import date, time, datetime, timedelta, timezone
-from talk_api import TalkAPI, TalkAPIError
+from config.talk_api import TalkAPI, TalkAPIError
 
 # Конфигурация страницы
 st.set_page_config(
